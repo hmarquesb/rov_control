@@ -94,6 +94,8 @@ class RelayNode:
         sock = q.make_udp_socket(self.bind_addr)
         self.endpoint = q.Endpoint(sock, self._on_message, loss=self.loss,
                                    name=f"relay-{self.role}")
+        if self.peer_addr:
+            self.endpoint.loss_exempt_addrs.add(self.peer_addr)
         self.running = True
         threading.Thread(target=self._liveness_monitor, daemon=True).start()
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()

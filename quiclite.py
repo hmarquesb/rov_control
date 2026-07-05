@@ -100,6 +100,8 @@ class Endpoint:
         # painel (demo_dashboard) animar os pacotes reais na tela.
         self.on_tap = on_tap
         self.local_port = sock.getsockname()[1]
+        # Destinos de infraestrutura que não devem sofrer a perda artificial.
+        self.loss_exempt_addrs = set()
         self.peers = {}           # addr -> Peer
         self.lock = threading.Lock()
         self.running = True
@@ -154,7 +156,8 @@ class Endpoint:
     def _raw_send(self, pkt, addr):
         # Aqui é onde a "perda de pacotes" é simulada: com probabilidade
         # self.loss, simplesmente NÃO enviamos o pacote.
-        dropped = bool(self.loss and random.random() < self.loss)
+        dropped = bool(addr not in self.loss_exempt_addrs
+                       and self.loss and random.random() < self.loss)
         if self.on_tap:
             # Reporta o pacote (tipo no 1º byte do cabeçalho) para a visualização.
             self.on_tap({"src": self.name, "dst_port": addr[1],

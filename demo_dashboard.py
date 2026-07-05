@@ -1,6 +1,5 @@
 """Dashboard interativo para demonstrar registro, autenticação e exclusão mútua."""
 import argparse
-import base64
 import queue
 import tkinter as tk
 from tkinter import ttk
@@ -168,10 +167,13 @@ class Dashboard:
             # follower ao receber esse termo. Para o botão executar um failback
             # de fato, reiniciamos o par de forma ordenada: primeiro encerramos
             # o líder atual, depois subimos um novo primário e um novo backup.
+            next_term = max(self.primary.term, self.backup.term) + 1
             self.backup.stop()
             self.primary = RelayNode("primary", PRIMARY, BACKUP)
+            self.primary.term = next_term
             self._start(self.primary)
             self.backup = RelayNode("backup", BACKUP, PRIMARY)
+            self.backup.term = next_term
             self._start(self.backup)
             self.primary_alive = True
             self.set_loss()
@@ -193,10 +195,13 @@ class Dashboard:
             rid = ev["rov"]
             self.videos[rid] = ev
             try:
-                encoded = base64.b64encode(ev["ppm"]).decode("ascii")
-                self.video_photos[rid] = tk.PhotoImage(data=encoded, format="PPM")
-            except tk.TclError:
+                self.video_photos[rid] = tk.PhotoImage(data=ev["ppm"], format="PPM")
+            except tk.TclError as exc:
                 self.video_photos.pop(rid, None)
+                text = f"[dashboard] erro ao renderizar câmera de {rid}: {exc}"
+                self.logs.append(text)
+                self.logs = self.logs[-250:]
+                g.log_append(self.log_box, text)
 
     def _tick(self):
         self._drain_taps(); self._refresh_status(); self._draw_topology(); self._draw_rovs()
@@ -303,7 +308,7 @@ class Dashboard:
 def main():
     global PRIMARY, BACKUP
     parser = argparse.ArgumentParser(description="Dashboard de controle distribuído de ROVs")
-    parser.add_argument("--config")
+    parser.add_argument("--config", default="demo_config.json")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
     config = load_config(args.config)
