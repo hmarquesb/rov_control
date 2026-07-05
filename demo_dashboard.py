@@ -1,5 +1,7 @@
 """Dashboard interativo para demonstrar registro, autenticação e exclusão mútua."""
 import argparse
+import math
+import time
 import queue
 import tkinter as tk
 from tkinter import ttk
@@ -276,29 +278,150 @@ class Dashboard:
         canvas.create_text(x, y+10, text=status, fill=color, font=("Segoe UI", 8))
 
     def _draw_rovs(self):
-        c = self.water; c.delete("all")
-        count = max(1, len(self.rov_ids)); width = 640 / count
+        c = self.water
+        c.delete("all")
+        now = time.time()
+        count = max(1, len(self.rov_ids))
+        width = 640 / count
+
         for i, rid in enumerate(self.rov_ids):
-            rov, x0, x1 = self.rovs[rid], i*width, (i+1)*width
-            c.create_rectangle(x0, 0, x1, 420, fill="#052538", outline="#1c6685")
+            rov, x0, x1 = self.rovs[rid], i * width, (i + 1) * width
+            mid = (x0 + x1) / 2
             snap = rov.state.snapshot()
-            c.create_text((x0+x1)/2, 20, text=f"ROV {rid}", fill="#7fd7ff", font=("Segoe UI", 11, "bold"))
+
+            # Água em camadas, raios de luz e partículas suspensas.
+            bands = ((0, 85, "#073d59"), (85, 175, "#06344d"),
+                     (175, 280, "#052b40"), (280, 390, "#042235"))
+            for y0, y1, color in bands:
+                c.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
+            c.create_polygon(x0 + 18, 0, x0 + 76, 0, x0 + 145, 350,
+                             x0 + 105, 350, fill="#0b4962", outline="")
+            c.create_polygon(x1 - 92, 0, x1 - 50, 0, x1 - 118, 330,
+                             x1 - 145, 330, fill="#094158", outline="")
+            for particle in range(18):
+                px = x0 + 8 + ((particle * 47 + i * 23) % max(20, int(width - 16)))
+                py = 58 + ((particle * 71 + int(now * 8)) % 300)
+                size = 1 + particle % 2
+                c.create_oval(px-size, py-size, px+size, py+size,
+                              fill="#4b8ba0", outline="")
+
+            # Leito marinho irregular, pedras, coral e algas oscilantes.
+            floor = [x0, 365, x0+35, 354, x0+74, 365, x0+118, 347,
+                     x0+166, 360, x0+220, 350, x1, 362, x1, 420, x0, 420]
+            c.create_polygon(*floor, fill="#806849", outline="#aa8a5b", width=2)
+            c.create_oval(x0+38, 350, x0+88, 382, fill="#344b50", outline="#647b78")
+            c.create_oval(x1-82, 344, x1-29, 378, fill="#293f46", outline="#526b6c")
+            for plant in range(4):
+                bx = x0 + 28 + plant * max(42, (width-55)/4)
+                sway = math.sin(now * 1.7 + plant + i) * 6
+                c.create_line(bx, 365, bx+sway, 326-plant%2*8,
+                              fill="#24a47a", width=4, smooth=True)
+                c.create_line(bx+5, 365, bx-8+sway, 337,
+                              fill="#17765f", width=3, smooth=True)
+            coral_x = x1 - 105
+            c.create_line(coral_x, 365, coral_x, 332, coral_x-12, 319,
+                          fill="#ef6f61", width=5, smooth=True)
+            c.create_line(coral_x, 344, coral_x+14, 326,
+                          fill="#f08b72", width=4, smooth=True)
+
+            # Peixes atravessam cada habitat em velocidades e alturas diferentes.
+            for fish in range(5):
+                direction = -1 if fish % 2 else 1
+                travel = (now * (17 + fish * 3) + fish * 61 + i * 37) % (width + 50)
+                fx = x0 - 25 + travel if direction > 0 else x1 + 25 - travel
+                fy = 185 + fish * 28 + math.sin(now * 1.8 + fish) * 8
+                color = ("#55c6c2", "#ffca62", "#d778b2", "#88bdeb", "#9ed36a")[fish]
+                c.create_oval(fx-10, fy-5, fx+10, fy+5, fill=color, outline="#153b49")
+                tail = (-16 if direction > 0 else 16)
+                c.create_polygon(fx+tail/2, fy, fx+tail, fy-7, fx+tail, fy+7,
+                                 fill=color, outline="#153b49")
+                eye_x = fx + (6 if direction > 0 else -6)
+                c.create_oval(eye_x-1, fy-2, eye_x+1, fy, fill="#071820", outline="")
+
+            # Cabeçalho e painel de telemetria translúcido simulado.
+            c.create_rectangle(x0+8, 8, x1-8, 56, fill="#071923", outline="#27708c")
+            c.create_text(mid, 20, text=f"ROV {rid.upper()}", fill="#8de1ff",
+                          font=("Segoe UI", 11, "bold"))
             state = "ONLINE / REGISTRADO" if rov.registered else "AGUARDANDO REGISTRO"
-            c.create_text((x0+x1)/2, 42, text=state, fill=g.OKC if rov.registered else g.MUTE, font=("Segoe UI", 8, "bold"))
-            cx, cy = (x0+x1)/2, 200 + min(snap["depth"], 20)*7
-            c.create_rectangle(cx-38, cy-14, cx+38, cy+14, fill="#ffb300", outline="#5b3d00", width=2)
-            c.create_oval(cx+28, cy-8, cx+46, cy+8, fill="#fff59d", outline="#5b3d00")
-            c.create_text(x0+12, 80, anchor="nw", fill=g.FG, font=("Consolas", 9),
-                          text=f"bateria {snap['battery']:5.1f}%\nprof.   {snap['depth']:5.2f} m\ntemp.   {snap['temperature']:5.1f} C\nthr.    {snap['thruster_power']:+4d}")
+            c.create_text(mid, 42, text=state, fill=g.OKC if rov.registered else g.MUTE,
+                          font=("Segoe UI", 8, "bold"))
+            c.create_rectangle(x0+10, 68, x0+126, 144, fill="#071923", outline="#1f6079")
+            c.create_text(x0+18, 76, anchor="nw", fill="#d2f3ff", font=("Consolas", 8),
+                          text=f"BAT  {snap['battery']:5.1f}%\nDEP  {snap['depth']:5.2f} m\nTMP  {snap['temperature']:5.1f} C\nTHR  {snap['thruster_power']:+4d}")
+
             photo, video = self.video_photos.get(rid), self.videos.get(rid)
             if photo and video:
-                c.create_image(x1-12, 78, image=photo, anchor="ne")
-                c.create_text(x1-12, 155, anchor="ne", fill="#bfeaff", font=("Consolas", 8),
-                              text=f"câmera {video['latency_ms']:.1f} ms | perdas {video['dropped']}")
+                c.create_rectangle(x1-116, 68, x1-8, 158, fill="#06151d", outline="#54b5d4", width=2)
+                c.create_image(x1-14, 74, image=photo, anchor="ne")
+                c.create_text(x1-13, 151, anchor="se", fill="#bfeaff", font=("Consolas", 7),
+                              text=f"CAM {video['latency_ms']:.0f} ms | DROP {video['dropped']}")
             else:
-                c.create_rectangle(x1-112, 78, x1-12, 153, outline="#416172")
-                c.create_text(x1-62, 115, text="SEM VÍDEO\n(associe um piloto)", fill=g.MUTE, font=("Segoe UI", 8), justify="center")
+                c.create_rectangle(x1-116, 68, x1-8, 158, fill="#06151d", outline="#315767")
+                c.create_text(x1-62, 113, text="CAMERA OFFLINE\nassocie um piloto",
+                              fill=g.MUTE, font=("Segoe UI", 8), justify="center")
 
+            # ROV: profundidade anima a posição; leve flutuação evita aspecto estático.
+            cx = mid
+            cy = min(322, 215 + min(snap["depth"], 14) * 6) + math.sin(now * 2 + i) * 2
+            power = snap["thruster_power"]
+
+            # Fachos dos dois refletores atrás do veículo.
+            beam = "#376a70" if rov.registered else "#243b42"
+            c.create_polygon(cx+44, cy-13, x1-8, cy-38, x1-8, cy+7,
+                             fill=beam, outline="")
+            c.create_polygon(cx+44, cy+9, x1-8, cy+18, x1-8, cy+52,
+                             fill="#2c5a61", outline="")
+
+            # Estrutura externa, skids, braços e garras.
+            c.create_line(cx-43, cy+21, cx-48, cy+36, cx+42, cy+36, cx+47, cy+21,
+                          fill="#647985", width=5, joinstyle="round")
+            c.create_line(cx+30, cy+22, cx+54, cy+36, cx+70, cy+31,
+                          fill="#8b99a0", width=5, smooth=True)
+            c.create_line(cx+68, cy+31, cx+76, cy+24, fill="#c0c8ca", width=3)
+            c.create_line(cx+68, cy+31, cx+77, cy+37, fill="#c0c8ca", width=3)
+
+            # Thrusters laterais com hélices girando.
+            for tx in (cx-50, cx+50):
+                c.create_oval(tx-13, cy-13, tx+13, cy+13, fill="#152832", outline="#8da1aa", width=2)
+                angle = now * (8 + abs(power)/18) + (0 if tx < cx else 1.5)
+                for blade in range(3):
+                    a = angle + blade * 2.094
+                    c.create_line(tx, cy, tx+math.cos(a)*9, cy+math.sin(a)*9,
+                                  fill="#7ed5dc", width=3)
+                c.create_oval(tx-3, cy-3, tx+3, cy+3, fill="#d8ecee", outline="")
+
+            # Casco com painéis, parafusos, câmera e luzes.
+            c.create_polygon(cx-39, cy-23, cx+31, cy-23, cx+43, cy-12,
+                             cx+39, cy+22, cx-39, cy+22, cx-46, cy+8,
+                             fill="#d58a12", outline="#ffd066", width=2)
+            c.create_rectangle(cx-26, cy-18, cx+18, cy+17, fill="#243a44", outline="#101d23", width=2)
+            c.create_line(cx-21, cy-11, cx+13, cy-11, fill="#55727d", width=2)
+            c.create_line(cx-21, cy+9, cx+13, cy+9, fill="#55727d", width=2)
+            for bolt_x in (cx-33, cx+29):
+                c.create_oval(bolt_x-2, cy-2, bolt_x+2, cy+2, fill="#e9d39f", outline="")
+            c.create_oval(cx+20, cy-12, cx+43, cy+11, fill="#082632", outline="#b5e6ed", width=2)
+            c.create_oval(cx+27, cy-6, cx+37, cy+4, fill="#50c9e8", outline="#d5fbff")
+            c.create_oval(cx+39, cy-18, cx+47, cy-10, fill="#fff5aa", outline="#fffbd7")
+            c.create_oval(cx+39, cy+12, cx+47, cy+20, fill="#fff5aa", outline="#fffbd7")
+            c.create_text(cx-4, cy, text=rid.upper(), fill="#ffca4f",
+                          font=("Consolas", 7, "bold"))
+
+            # Bolhas saem dos thrusters; intensidade acompanha a potência.
+            bubble_count = 3 + int(abs(power) / 12)
+            flow_dir = -1 if power >= 0 else 1
+            source_x = cx-57 if flow_dir < 0 else cx+57
+            for bubble in range(bubble_count):
+                phase = (now * (22 + bubble % 3) + bubble * 17 + i * 11) % 80
+                bx = source_x + flow_dir * phase
+                by = cy + math.sin(now * 3 + bubble) * 7 - (bubble % 3) * 5
+                if x0+4 < bx < x1-4:
+                    radius = 2 + bubble % 3
+                    c.create_oval(bx-radius, by-radius, bx+radius, by+radius,
+                                  outline="#8de6f1", width=1)
+
+            # Cabo umbilical sobe para fora da cena.
+            c.create_line(cx-8, cy-23, cx-18+math.sin(now)*5, 160,
+                          fill="#334e59", width=2, smooth=True, dash=(4, 3))
     def stop_all(self):
         for node in [self.primary, self.backup, *self.rovs.values(), *self.pilots.values()]:
             try: node.stop()
