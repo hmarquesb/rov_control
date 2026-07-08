@@ -53,9 +53,12 @@ def main():
     ap.add_argument("--two-pilots", action="store_true",
                     help="também abre um segundo piloto (demonstra concorrência)")
     ap.add_argument("--config", help="arquivo JSON com relays, ROVs e pilotos")
+    ap.add_argument("--secret", default=None,
+                    help="segredo de rede compartilhado (repassado a todos os nós)")
     ap.add_argument("--scenario", choices=["manual", "failover"], default="manual")
     args = ap.parse_args()
 
+    secret = ["--secret", args.secret] if args.secret else []
     config = load_config(args.config)
     configured_loss = float(config.get("network", {}).get("loss", 0.0))
     loss_value = args.loss if args.loss else configured_loss
@@ -71,21 +74,21 @@ def main():
     procs.append(spawn(["relay_server.py", "--role", "primary",
                         "--host", relay_addrs[0][0], "--port", str(relay_addrs[0][1]),
                         "--peer", f"{relay_addrs[1][0]}:{relay_addrs[1][1]}",
-                        "--corner", "tl"] + loss))
+                        "--corner", "tl"] + loss + secret))
     time.sleep(0.6)
 
     print("Subindo RELAY backup (canto superior direito)…")
     procs.append(spawn(["relay_server.py", "--role", "backup",
                         "--host", relay_addrs[1][0], "--port", str(relay_addrs[1][1]),
                         "--peer", f"{relay_addrs[0][0]}:{relay_addrs[0][1]}",
-                        "--corner", "tr"] + loss))
+                        "--corner", "tr"] + loss + secret))
     time.sleep(0.6)
 
     for index, rov in enumerate(config.get("rovs", [])):
         print(f"Subindo ROV {rov['id']}…")
         procs.append(spawn(["rov_simulator.py", "--id", rov["id"],
                             "--relays", relay_text,
-                            "--corner", corners[index % len(corners)]]))
+                            "--corner", corners[index % len(corners)]] + secret))
         time.sleep(0.6)
 
     pilots = list(config.get("pilots", []))
@@ -95,7 +98,7 @@ def main():
         print(f"Subindo PILOTO {pilot['id']} -> {pilot['target']}…")
         procs.append(spawn(["pilot_client.py", "--id", pilot["id"],
                             "--target", pilot["target"], "--relays", relay_text,
-                            "--corner", corners[(index + 1) % len(corners)]]))
+                            "--corner", corners[(index + 1) % len(corners)]] + secret))
         time.sleep(0.4)
 
     if args.scenario == "failover":

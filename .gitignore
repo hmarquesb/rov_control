@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 *.log
 identity_keys/
+.venv/
+venv/
+*.tar.gz

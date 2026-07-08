@@ -582,7 +582,8 @@ def make_handler(controller):
 def main():
     ap = argparse.ArgumentParser(description="Controle web do piloto ROV")
     ap.add_argument("--id", default="pilotoA")
-    ap.add_argument("--private-key", default=None)
+    ap.add_argument("--secret", default=None,
+                    help="segredo de rede compartilhado (o mesmo em todos os nós)")
     ap.add_argument("--target", default="rov1")
     ap.add_argument("--relays", default="127.0.0.1:5000")
     ap.add_argument("--loss", type=float, default=0.0)
@@ -592,7 +593,7 @@ def main():
 
     relays = [parse_addr(item) for item in args.relays.split(",") if item.strip()]
     def make_node():
-        return PilotNode(args.id, args.private_key, args.target, relays, loss=args.loss)
+        return PilotNode(args.id, args.secret, args.target, relays, loss=args.loss)
 
     controller = WebPilot(make_node)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(controller))

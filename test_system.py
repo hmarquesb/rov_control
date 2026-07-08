@@ -5,7 +5,7 @@ Teste de integração HEADLESS (sem interface gráfica): sobe dois relays, um
 ROV e dois pilotos no mesmo processo e verifica, com asserções, cada conceito
 de Sistemas Distribuídos que o projeto demonstra:
 
-  1. Autenticação (RSA-PSS + Diffie-Hellman efêmero) — chave cadastrada entra, chave não cadastrada não.
+  1. Autenticação (segredo compartilhado via HMAC + Diffie-Hellman efêmero) — segredo certo entra, segredo errado não.
   2. Controle de concorrência (exclusão mútua) — só um piloto por ROV.
   3. Roteamento de comando (canal confiável) — o ROV reage ao comando.
   4. Replicação — o backup espelha o estado do primário.
@@ -20,7 +20,6 @@ import time
 from relay_server import RelayNode
 from rov_simulator import RovNode
 from pilot_client import PilotNode
-from identity_keys import generate_untrusted_private_key
 
 PRIMARY = ("127.0.0.1", 5100)
 BACKUP = ("127.0.0.1", 5101)
@@ -47,7 +46,7 @@ def main():
     backup.start()
     time.sleep(1.5)
 
-    print("== Subindo ROV e piloto A (chave RSA cadastrada) ==")
+    print("== Subindo ROV e piloto A (segredo de rede correto) ==")
     rov = RovNode("rov1", [PRIMARY, BACKUP])
     rov.start()
     pilotA = PilotNode("pilotoA", None, "rov1", [PRIMARY, BACKUP])
@@ -66,15 +65,15 @@ def main():
     check(f"profundidade aumentou após comando ({depth_before} -> {depth_after})",
           depth_after > depth_before)
 
-    print("\n-- 3) Autenticação com chave RSA NÃO CADASTRADA é recusada --")
-    pilotBad = PilotNode("pilotoB", generate_untrusted_private_key(), "rov1", [PRIMARY, BACKUP])
+    print("\n-- 3) Autenticação com SEGREDO ERRADO é recusada --")
+    pilotBad = PilotNode("pilotoB", "segredo-errado", "rov1", [PRIMARY, BACKUP])
     pilotBad.start()
     time.sleep(2.5)
-    check("piloto com chave não cadastrada NÃO autenticou", not pilotBad.authed)
+    check("piloto com segredo errado NÃO autenticou", not pilotBad.authed)
     pilotBad.stop()
     time.sleep(0.5)
 
-    print("\n-- 4) Concorrência: piloto B (chave cadastrada) tenta o mesmo ROV --")
+    print("\n-- 4) Concorrência: piloto B (segredo correto) tenta o mesmo ROV --")
     pilotB = PilotNode("pilotoB", None, "rov1", [PRIMARY, BACKUP])
     pilotB.start()
     time.sleep(2.5)

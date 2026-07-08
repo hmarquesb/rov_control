@@ -4,8 +4,8 @@ Trabalho final de **Sistemas Distribuídos**: controle remoto de um ROV
 (veículo submarino, aqui simulado) por um piloto, passando por um servidor
 **Relay**. O sistema demonstra, em código, os principais temas da disciplina:
 travessia de NAT, exclusão mútua, detecção de falhas, **um protocolo de
-transporte próprio (inspirado no QUIC)**, **autenticação** e **replicação com
-failover** do servidor.
+transporte próprio (inspirado no QUIC)**, **autenticação por segredo
+compartilhado** e **replicação com failover** do servidor.
 
 Requer apenas **Python 3** (a interface usa Tkinter, que já vem no Python).
 Nenhuma biblioteca externa, nenhuma internet — roda inteiro em um PC só.
@@ -47,7 +47,7 @@ Há **dois modos de execução** dos mesmos nós, e em ambos a comunicação é 
 | Arquivo | Papel |
 |---|---|
 | `quiclite.py` | **Transporte inspirado no QUIC**: sobre UDP, com um canal confiável e ordenado (seq/ACK/retransmissão) e um canal não-confiável, + simulação de perda de pacotes. |
-| `protocol.py`, `dh_exchange.py`, `identity_keys.py` | Nonces, DH efêmero, HKDF e autenticação mútua por RSA-PSS. |
+| `protocol.py`, `dh_exchange.py`, `identity_keys.py` | Nonces, DH efêmero, HKDF e autenticação mútua por **segredo compartilhado (HMAC-SHA256)**. |
 | `relay_server.py` | Relay (primário/backup): registro, exclusão mútua, heartbeat, auth, **replicação e failover**. Lógica (`RelayNode`) separada da GUI. |
 | `rov_simulator.py` | ROV simulado: telemetria, aplica comandos, **failover** automático. |
 | `pilot_client.py` | Piloto: autentica, pede controle, envia comandos, recebe telemetria, **failover**. |
@@ -107,14 +107,74 @@ python relay_server.py --role backup  --port 5001 --peer 127.0.0.1:5000 --corner
 # ROV
 python rov_simulator.py --id rov1 --relays 127.0.0.1:5000,127.0.0.1:5001 --corner bl
 
-# Piloto (a chave RSA local é carregada automaticamente)
+# Piloto (usa o segredo de rede padrão; veja abaixo como trocar)
 python pilot_client.py --id pilotoA --target rov1 --relays 127.0.0.1:5000,127.0.0.1:5001 --corner br
 ```
 
 > Para rodar em **máquinas diferentes** na mesma rede, troque `127.0.0.1`
 > pelos IPs reais e use `--host 0.0.0.0` nos relays.
 
-As identidades RSA de demonstração são provisionadas em `identity_keys/` no primeiro uso. As chaves privadas ficam locais e os relays verificam apenas as chaves públicas. Para usar um PEM específico, passe `--private-key caminho.pem`.
+### Autenticação por segredo compartilhado
+
+Todos os nós (relays, ROVs e pilotos) compartilham **um mesmo segredo de rede** —
+o modelo do WireGuard/TLS-PSK. A prova de identidade é um **HMAC-SHA256** desse
+segredo sobre o transcript Diffie-Hellman: o segredo **nunca trafega**, o DH dá
+uma chave de sessão efêmera (forward secrecy) e o nonce impede replay. Quem
+conhece o segredo entra — com o **id que quiser**, sem copiar nenhum arquivo de
+chave.
+
+O segredo padrão é `rov-lab-2026`. Para trocar, passe `--secret NOSSA_SENHA` em
+**todos** os processos (ou defina a variável de ambiente `ROV_NETWORK_KEY`):
+
+```bash
+python relay_server.py   --role primary --secret NOSSA_SENHA ...
+python pilot_client.py   --id quemquiser --secret NOSSA_SENHA ...
+```
+
+> Trade-off honesto: com segredo compartilhado, todos que o conhecem são
+> igualmente confiáveis — a identidade é um "nome reivindicado", não uma chave
+> por pessoa. É o preço de não ter que distribuir chaves.
+
+---
+
+## Rodando distribuído de verdade (2 relays em IP público)
+
+Só os **dois relays** precisam de IP público — ROVs e pilotos sempre *saem* em
+direção a eles, então **funcionam atrás de NAT** (PCs do lab, seu PC, celular)
+sem configuração de rede. Recomendado: **duas VMs** (ex.: Oracle Cloud Always
+Free), uma para cada relay, para demonstrar o failover entre hosts reais.
+
+**1. Nas VMs** — abra a porta **UDP** (não TCP!) no firewall/security group e rode:
+
+```bash
+# VM1 (IP público IP1) — relay primário
+python relay_server.py --role primary --host 0.0.0.0 --port 5000 \
+    --peer IP2:5001 --secret NOSSA_SENHA --no-gui
+
+# VM2 (IP público IP2) — relay backup
+python relay_server.py --role backup  --host 0.0.0.0 --port 5001 \
+    --peer IP1:5000 --secret NOSSA_SENHA --no-gui
+```
+
+**2. Em qualquer PC do lab / seu PC** — aponte os clientes para os IPs públicos:
+
+```bash
+python rov_simulator.py --id rov1     --secret NOSSA_SENHA --relays IP1:5000,IP2:5001
+python pilot_client.py  --id pilotoA  --secret NOSSA_SENHA --relays IP1:5000,IP2:5001 --target rov1
+```
+
+**3. Celular / navegador** — rode o piloto web em algum PC que alcance os relays
+(inclusive uma das VMs, se quiser acesso pela internet) e abra o endereço dele no
+celular:
+
+```bash
+python web_pilot.py --id pilotoCel --secret NOSSA_SENHA \
+    --relays IP1:5000,IP2:5001 --target rov1 --port 8080
+# no celular: http://<ip-de-quem-roda-o-web_pilot>:8080
+```
+
+**Criar novos ROVs/pilotos** é só escolher um `--id` diferente e usar o mesmo
+`--secret` — não há lista fixa nem arquivos para copiar.
 
 ---
 
@@ -126,9 +186,9 @@ As identidades RSA de demonstração são provisionadas em `identity_keys/` no p
    **ROV na água** (dir.). Os relays e o ROV já estão no ar; **o piloto começa
    desconectado** de propósito.
 2. **Conexão + autenticação ao vivo:** clique **"Conectar Piloto A"**. Veja os
-   pacotes azuis (registro → DH efêmero → assinatura RSA-PSS) voando até o RELAY P, o nó
+   pacotes azuis (registro → DH efêmero → prova HMAC do segredo) voando até o RELAY P, o nó
    do piloto virar "autenticado" e depois "controla ✓". O log embaixo mostra o
-   processo; explique que **chaves privadas e a chave de sessão nunca trafegam**.
+   processo; explique que **o segredo e a chave de sessão nunca trafegam**.
 3. **Controle + telemetria:** use **Frente/Ré/Parar** com o slider de potência.
    O ROV **desce/sobe** na água, solta bolhas e a bateria cai — e os pacotes de
    comando (azul) e telemetria (cinza) aparecem na topologia.
@@ -168,7 +228,7 @@ As identidades RSA de demonstração são provisionadas em `identity_keys/` no p
 | Canais independentes / *head-of-line blocking* | `send_reliable` (comandos) vs `send_unreliable` (telemetria): a perda em um não trava o outro. |
 | Detecção de falhas / heartbeat | `heartbeat` + `RelayNode._liveness_monitor` (clientes) e `relay_heartbeat` (relay↔cliente). |
 | Exclusão mútua / concorrência | `RelayNode._try_grant_control` — um piloto por ROV. |
-| Autenticação (segurança) | RSA-PSS mútuo + DH efêmero + HKDF em `identity_keys.py`, `dh_exchange.py` e `RelayNode._handle_auth`. |
+| Autenticação (segurança) | Segredo compartilhado (HMAC-SHA256) mútuo + DH efêmero + HKDF em `identity_keys.py`, `dh_exchange.py` e `RelayNode._handle_auth`. |
 | Registro distribuído de sessões | Dicionários `rovs`/`pilots` no relay. |
 | **Replicação** | `RelayNode._replicate` (primário → backup) e `_apply_replication` (espelho). |
 | **Tolerância a falhas do servidor / failover** | Promoção do backup (`_heartbeat_loop`), migração dos clientes (`_failover`) e **preservação de posse** via reserva a partir do estado replicado (`_reservation_blocks`). |

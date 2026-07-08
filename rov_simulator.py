@@ -26,7 +26,7 @@ from dh_exchange import (
     GROUP_ID, confirmation_transcript, decode_public, derive_session_key,
     encode_public, fingerprint, generate_keypair, transcript,
 )
-from identity_keys import load_private_key, sign_transcript, verify_transcript
+from identity_keys import load_network_key, sign_transcript, verify_transcript
 from video_stream import generate_ppm, fragment_frame
 
 TELEMETRY_INTERVAL = 1.5
@@ -73,14 +73,14 @@ class RovState:
 
 class RovNode:
     def __init__(self, rov_id, relays, loss=0.0, on_event=None,
-                 private_key=None, video=True):
+                 secret=None, video=True):
         self.rov_id = rov_id
         self.relays = relays            # lista de (ip, porta), [primário, backup]
         self.idx = 0
         self.current = relays[0]
         self.loss = loss
         self.on_event = on_event
-        self.identity_key = load_private_key("rov", rov_id, private_key)
+        self.secret = load_network_key(secret)
         self.video_enabled = video
 
         self.state = RovState()
@@ -159,7 +159,7 @@ class RovNode:
                 relay_public = decode_public(msg.get("dh_public"))
                 private, public = generate_keypair()
                 hs = transcript("rov", self.rov_id, nonce, public, relay_public)
-                signature = sign_transcript(self.identity_key, hs)
+                signature = sign_transcript(self.secret, hs)
                 self.session_key = derive_session_key(private, relay_public, nonce, hs)
                 self.auth_transcript = hs
                 self.auth_relay_identity = relay_identity
@@ -170,11 +170,11 @@ class RovNode:
                 self.current, {"type": "auth_response", "dh_group": GROUP_ID,
                                "dh_public": encode_public(public),
                                "signature": signature})
-            self._log("chave DH efêmera enviada; transcript assinado com RSA-PSS")
+            self._log("chave DH efêmera enviada; transcript autenticado com HMAC")
         elif mtype == "registered":
             expected = fingerprint(self.session_key) if self.session_key else None
             relay_ok = bool(expected and self.auth_transcript and verify_transcript(
-                "relay", self.auth_relay_identity,
+                self.secret,
                 confirmation_transcript(self.auth_transcript, expected),
                 msg.get("relay_signature", ""),
             ))
@@ -373,8 +373,8 @@ def main():
     ap.add_argument("--relays", default="127.0.0.1:5000,127.0.0.1:5001",
                     help="lista de relays separados por vírgula (primário,backup)")
     ap.add_argument("--loss", type=float, default=0.0)
-    ap.add_argument("--private-key", default=None,
-                    help="arquivo PEM da chave privada RSA do ROV")
+    ap.add_argument("--secret", default=None,
+                    help="segredo de rede compartilhado (o mesmo em todos os nós)")
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--corner", default="bl")
     ap.add_argument("--no-gui", action="store_true")
@@ -382,7 +382,7 @@ def main():
 
     relays = [parse_addr(s) for s in args.relays.split(",")]
     node = RovNode(args.id, relays, loss=args.loss,
-                   private_key=args.private_key, video=not args.no_video)
+                   secret=args.secret, video=not args.no_video)
 
     if args.no_gui:
         node.start()

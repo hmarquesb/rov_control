@@ -3,7 +3,6 @@ import time
 
 from demo_config import validate_config
 from pilot_client import PilotNode
-from identity_keys import generate_untrusted_private_key
 from relay_server import RelayNode
 from rov_simulator import RovNode
 from video_stream import FrameAssembler, fragment_frame, generate_ppm
@@ -65,7 +64,7 @@ def main():
     video_events = []
     rov1 = RovNode("rov1", [PRIMARY, BACKUP], video=True)
     rov2 = RovNode("rov2", [PRIMARY, BACKUP], video=False)
-    bad_rov = RovNode("rov3", [PRIMARY, BACKUP], private_key=generate_untrusted_private_key(), video=False)
+    bad_rov = RovNode("rov3", [PRIMARY, BACKUP], secret="segredo-errado", video=False)
     pilot_a = PilotNode("pilotoA", None, "rov1",
                         [PRIMARY, BACKUP], on_event=lambda e: video_events.append(e))
     pilot_b = PilotNode("pilotoB", None, "rov2",
@@ -77,7 +76,7 @@ def main():
     try:
         check("dois ROVs autenticam", wait_until(
             lambda: rov1.registered and rov2.registered))
-        check("ROV com chave RSA não cadastrada é recusado", wait_until(
+        check("ROV com segredo errado é recusado", wait_until(
             lambda: not bad_rov.registered and "rov3" not in primary.rovs, timeout=3))
         check("pilotos controlam ROVs independentes", wait_until(
             lambda: pilot_a.controlling == "rov1" and pilot_b.controlling == "rov2"))
@@ -104,8 +103,12 @@ def main():
         primary.stop()
         check("backup assume em termo superior", wait_until(
             lambda: backup.active and backup.term >= 2, timeout=5))
+        # Espera o ROV concluir o re-registro no backup E adotar o novo termo:
+        # só então faz sentido testar a rejeição de um comando de termo OBSOLETO
+        # (antes disso o ROV ainda nem sabe qual é o termo atual).
         check("clientes migram ao novo líder", wait_until(
-            lambda: rov1.current == BACKUP and pilot_a.current == BACKUP, timeout=9))
+            lambda: pilot_a.current == BACKUP and rov1.current == BACKUP
+                    and rov1.registered and rov1.highest_term >= backup.term, timeout=9))
 
         depth = rov1.state.snapshot()["depth"]
         target = backup.rovs["rov1"]["addr"]

@@ -4,7 +4,7 @@ pilot_client.py
 O Host do PILOTO. Fluxo:
 
   1. Registra-se no relay dizendo qual ROV quer controlar.
-  2. AUTENTICA-SE por RSA-PSS + Diffie-Hellman efêmero (a senha nunca vai pela rede).
+  2. AUTENTICA-SE por SEGREDO compartilhado (HMAC) + Diffie-Hellman efêmero (o segredo nunca vai pela rede).
   3. Se autenticar, pede o controle do ROV (o relay garante exclusão mútua:
      só um piloto por ROV).
   4. Envia COMANDOS (canal confiável) e recebe TELEMETRIA (canal
@@ -24,7 +24,7 @@ from dh_exchange import (
     GROUP_ID, confirmation_transcript, decode_public, derive_session_key,
     encode_public, fingerprint, generate_keypair, transcript,
 )
-from identity_keys import load_private_key, sign_transcript, verify_transcript
+from identity_keys import load_network_key, sign_transcript, verify_transcript
 from video_stream import FrameAssembler
 
 HEARTBEAT_INTERVAL = 1.0
@@ -32,9 +32,9 @@ FAILOVER_TIMEOUT = 6.0  # maior que o PRIMARY_TIMEOUT do relay (backup assume an
 
 
 class PilotNode:
-    def __init__(self, pilot_id, private_key, target, relays, loss=0.0, on_event=None):
+    def __init__(self, pilot_id, secret, target, relays, loss=0.0, on_event=None):
         self.pilot_id = pilot_id
-        self.identity_key = load_private_key("pilot", pilot_id, private_key)
+        self.secret = load_network_key(secret)
         self.target = target
         self.relays = relays
         self.idx = 0
@@ -181,7 +181,7 @@ class PilotNode:
                 relay_public = decode_public(msg.get("dh_public"))
                 private, public = generate_keypair()
                 hs = transcript("pilot", self.pilot_id, nonce, public, relay_public)
-                signature = sign_transcript(self.identity_key, hs)
+                signature = sign_transcript(self.secret, hs)
                 self.session_key = derive_session_key(private, relay_public, nonce, hs)
                 self.auth_transcript = hs
                 self.auth_relay_identity = relay_identity
@@ -192,11 +192,11 @@ class PilotNode:
                 self.current, {"type": "auth_response", "dh_group": GROUP_ID,
                                "dh_public": encode_public(public),
                                "signature": signature})
-            self._log("chave DH efêmera enviada; transcript assinado com RSA-PSS")
+            self._log("chave DH efêmera enviada; transcript autenticado com HMAC")
         elif mtype == "auth_ok":
             expected = fingerprint(self.session_key) if self.session_key else None
             relay_ok = bool(expected and self.auth_transcript and verify_transcript(
-                "relay", self.auth_relay_identity,
+                self.secret,
                 confirmation_transcript(self.auth_transcript, expected),
                 msg.get("relay_signature", ""),
             ))
@@ -419,8 +419,8 @@ def parse_addr(s):
 def main():
     ap = argparse.ArgumentParser(description="Cliente do piloto")
     ap.add_argument("--id", default="pilotoA")
-    ap.add_argument("--private-key", default=None,
-                    help="arquivo PEM da chave privada RSA do piloto")
+    ap.add_argument("--secret", default=None,
+                    help="segredo de rede compartilhado (o mesmo em todos os nós)")
     ap.add_argument("--target", default="rov1")
     ap.add_argument("--relays", default="127.0.0.1:5000,127.0.0.1:5001")
     ap.add_argument("--loss", type=float, default=0.0)
@@ -429,7 +429,7 @@ def main():
     args = ap.parse_args()
 
     relays = [parse_addr(s) for s in args.relays.split(",")]
-    node = PilotNode(args.id, args.private_key, args.target, relays, loss=args.loss)
+    node = PilotNode(args.id, args.secret, args.target, relays, loss=args.loss)
 
     if args.no_gui:
         node.start()

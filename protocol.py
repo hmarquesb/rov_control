@@ -19,11 +19,12 @@ quiclite (UDP), escolhendo o canal certo para cada uma:
 
 AUTENTICAÇÃO MÚTUA + ACORDO DE CHAVE:
 --------------------------------------
-Cada piloto, ROV e relay possui uma chave privada RSA local. As chaves
-públicas cadastradas verificam assinaturas RSA-PSS do transcript DH. Cliente
-e relay geram chaves Diffie-Hellman efêmeras, assinam a negociação e derivam
-uma chave de sessão com HKDF-SHA256. Nonces impedem replay e uma nova sessão é
-negociada após cada conexão ou failover. Ver dh_exchange.py e identity_keys.py."""
+Todos os nós (pilotos, ROVs e relays) compartilham um mesmo SEGREDO DE REDE.
+Cliente e relay geram chaves Diffie-Hellman efêmeras e autenticam a negociação
+com um HMAC-SHA256 desse segredo sobre o transcript DH (o segredo nunca trafega).
+A chave de sessão é derivada com HKDF-SHA256. Nonces impedem replay e uma nova
+sessão é negociada após cada conexão ou failover. Ver dh_exchange.py e
+identity_keys.py."""
 
 import secrets
 

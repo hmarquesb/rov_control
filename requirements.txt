@@ -1,1 +1,3 @@
-cryptography>=42,<50
+# Sem dependências externas: o projeto roda só com a biblioteca padrão do Python 3.
+# (A autenticação usa hmac/hashlib do stdlib; a interface usa tkinter, que
+#  acompanha o Python.)

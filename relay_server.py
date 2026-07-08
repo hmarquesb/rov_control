@@ -17,7 +17,7 @@ CONCEITOS DE SISTEMAS DISTRIBUÍDOS NESTE ARQUIVO:
 4) Detecção de falhas: heartbeats + `_liveness_monitor` derrubam clientes que
    ficaram mudos.
 
-5) Autenticação: pilotos passam por RSA-PSS + Diffie-Hellman efêmero antes de controlar.
+5) Autenticação: pilotos provam um SEGREDO compartilhado (HMAC) + Diffie-Hellman efêmero antes de controlar.
 
 6) REPLICAÇÃO e TOLERÂNCIA A FALHAS DO PRÓPRIO RELAY (a novidade principal):
    rodamos DOIS relays em esquema PRIMÁRIO-BACKUP.
@@ -43,7 +43,7 @@ from dh_exchange import (
     encode_public, fingerprint,
     generate_keypair, transcript,
 )
-from identity_keys import load_private_key, sign_transcript, verify_transcript
+from identity_keys import load_network_key, sign_transcript, verify_transcript
 from protocol import gen_nonce, new_session_token
 
 # --- Parâmetros de tempo (segundos) ---------------------------------------
@@ -59,9 +59,10 @@ RESERVE_WINDOW = 12.0     # por quanto tempo o backup reserva o controle ao dono
 class RelayNode:
     """Toda a lógica do relay. Sem nenhuma dependência de interface gráfica."""
 
-    def __init__(self, role, bind_addr, peer_addr=None, loss=0.0, on_event=None):
+    def __init__(self, role, bind_addr, peer_addr=None, loss=0.0, on_event=None,
+                 secret=None):
         self.role = role                 # 'primary' ou 'backup'
-        self.identity_key = load_private_key("relay", role)
+        self.secret = load_network_key(secret)
         self.bind_addr = bind_addr       # (ip, porta) onde este relay escuta
         self.peer_addr = peer_addr       # (ip, porta) do OUTRO relay
         self.loss = loss
@@ -334,7 +335,7 @@ class RelayNode:
             client_public = decode_public(msg.get("dh_public"))
             hs = transcript(role, cid, nonce, client_public, session["dh_public"])
             authenticated = verify_transcript(
-                role, cid, hs, msg.get("signature", "")
+                self.secret, hs, msg.get("signature", "")
             )
             key = (derive_session_key(session["dh_private"], client_public, nonce, hs)
                    if authenticated else None)
@@ -342,11 +343,10 @@ class RelayNode:
             authenticated, key = False, None
 
         if not authenticated:
-            reason = ("dispositivo não autorizado" if role == "rov"
-                      else "assinatura RSA inválida")
+            reason = "segredo de rede inválido"
             self.endpoint.send_reliable(
                 addr, {"type": "auth_fail", "reason": reason})
-            self._log(f"{role.upper()} '{cid}' FALHOU na assinatura RSA-PSS")
+            self._log(f"{role.upper()} '{cid}' FALHOU na prova do segredo (HMAC)")
             with self.lock:
                 (self.rovs if role == "rov" else self.pilots).pop(cid, None)
                 self.by_addr.pop(addr, None)
@@ -355,7 +355,7 @@ class RelayNode:
 
         key_id = fingerprint(key)
         relay_signature = sign_transcript(
-            self.identity_key, confirmation_transcript(hs, key_id)
+            self.secret, confirmation_transcript(hs, key_id)
         )
         with self.lock:
             session["authed"] = True
@@ -747,12 +747,15 @@ def main():
     ap.add_argument("--port", type=int, default=5000)
     ap.add_argument("--peer", default=None, help="endereço do outro relay, ex: 127.0.0.1:5001")
     ap.add_argument("--loss", type=float, default=0.0, help="fração de pacotes descartados (0..1)")
+    ap.add_argument("--secret", default=None,
+                    help="segredo de rede compartilhado (o mesmo em todos os nós)")
     ap.add_argument("--corner", default="tl", help="canto da janela: tl/tr/bl/br/c")
     ap.add_argument("--no-gui", action="store_true")
     args = ap.parse_args()
 
     peer = parse_addr(args.peer) if args.peer else None
-    node = RelayNode(args.role, (args.host, args.port), peer, loss=args.loss)
+    node = RelayNode(args.role, (args.host, args.port), peer, loss=args.loss,
+                     secret=args.secret)
 
     if args.no_gui:
         node.start()

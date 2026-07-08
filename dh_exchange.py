@@ -1,7 +1,7 @@
 """Diffie-Hellman efêmero autenticado para o handshake didático.
 
 Usa o grupo MODP 14 (2048 bits) do RFC 3526. A troca DH cria um segredo
-temporário; uma assinatura RSA-PSS da identidade autentica o transcript.
+temporário; um HMAC do segredo de rede compartilhado autentica o transcript.
 """
 import hashlib
 import hmac

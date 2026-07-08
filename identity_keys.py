@@ -1,115 +1,56 @@
-"""Provisionamento e assinaturas RSA-PSS das identidades da demonstração."""
+"""Autenticação por SEGREDO COMPARTILHADO (pre-shared key) para o handshake.
 
-import base64
+Antes o projeto usava um par de chaves RSA por identidade, guardado em arquivos
+`.pem`. Isso obrigava a COPIAR chaves entre as máquinas para rodar distribuído.
+Agora usamos um único SEGREDO DE REDE (o mesmo em todos os nós) — o modelo do
+WireGuard / TLS-PSK: quem conhece o segredo entra, com o nome (id) que quiser.
+
+A prova de identidade é um HMAC-SHA256 sobre o mesmo transcript Diffie-Hellman
+que já existia (ver dh_exchange.py). Assim continuamos tendo:
+
+  * chave de sessão efêmera via DH (forward secrecy);
+  * nonce no transcript (anti-replay);
+  * autenticação MÚTUA (cliente e relay provam que conhecem o segredo);
+  * o segredo NUNCA trafega na rede — só o HMAC dele viaja.
+
+Trade-off (seja honesto na banca): com um segredo compartilhado, todos que o
+conhecem são igualmente confiáveis; a identidade é um "nome reivindicado", não
+uma chave criptográfica por pessoa. É o preço de não precisar distribuir chaves.
+
+Só depende da biblioteca padrão do Python (hmac/hashlib) — nenhuma dependência
+externa.
+"""
+
+import hashlib
+import hmac
 import os
-import threading
-from pathlib import Path
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-
-
-KEY_DIR = Path(os.getenv("ROV_IDENTITY_KEY_DIR", Path(__file__).with_name("identity_keys")))
-AUTHORIZED_IDENTITIES = {
-    "pilot": {"pilotoA", "pilotoB"},
-    "rov": {"rov1", "rov2", "rov3"},
-    "relay": {"primary", "backup"},
-}
-_provision_lock = threading.Lock()
+# Segredo padrão da demonstração. Pode ser sobrescrito por --secret na linha de
+# comando ou pela variável de ambiente ROV_NETWORK_KEY. Em um deploy real, todos
+# os relays e clientes precisam usar EXATAMENTE o mesmo valor.
+DEFAULT_SECRET = "rov-lab-2026"
 
 
-def _paths(role, identity):
-    prefix = f"{role}-{identity}"
-    return KEY_DIR / f"{prefix}-private.pem", KEY_DIR / f"{prefix}-public.pem"
+def load_network_key(secret=None):
+    """Resolve o segredo de rede e o devolve como bytes.
+
+    Precedência: argumento explícito > variável de ambiente ROV_NETWORK_KEY >
+    DEFAULT_SECRET. Aceita str ou bytes.
+    """
+    value = secret or os.getenv("ROV_NETWORK_KEY") or DEFAULT_SECRET
+    return value.encode("utf-8") if isinstance(value, str) else bytes(value)
 
 
-def provision_demo_identities():
-    """Cria os pares RSA da demo sem corrida entre processos."""
-    with _provision_lock:
-        KEY_DIR.mkdir(parents=True, exist_ok=True)
-        for role, identities in AUTHORIZED_IDENTITIES.items():
-            for identity in identities:
-                private_path, public_path = _paths(role, identity)
-                if not private_path.exists():
-                    private_key = rsa.generate_private_key(
-                        public_exponent=65537, key_size=2048
-                    )
-                    private_pem = private_key.private_bytes(
-                        serialization.Encoding.PEM,
-                        serialization.PrivateFormat.PKCS8,
-                        serialization.NoEncryption(),
-                    )
-                    try:
-                        with private_path.open("xb") as key_file:
-                            key_file.write(private_pem)
-                    except FileExistsError:
-                        pass
-
-                private_key = serialization.load_pem_private_key(
-                    private_path.read_bytes(), password=None
-                )
-                public_pem = private_key.public_key().public_bytes(
-                    serialization.Encoding.PEM,
-                    serialization.PublicFormat.SubjectPublicKeyInfo,
-                )
-                if not public_path.exists():
-                    try:
-                        with public_path.open("xb") as key_file:
-                            key_file.write(public_pem)
-                    except FileExistsError:
-                        pass
-                if public_path.read_bytes() != public_pem:
-                    raise RuntimeError(f"par RSA inconsistente para {role}:{identity}")
-
-def load_private_key(role, identity, private_key=None):
-    """Carrega a chave local padrão ou aceita uma chave injetada para testes."""
-    if private_key is not None and not isinstance(private_key, (str, os.PathLike)):
-        return private_key
-    provision_demo_identities()
-    path = Path(private_key) if private_key else _paths(role, identity)[0]
-    return serialization.load_pem_private_key(path.read_bytes(), password=None)
+def sign_transcript(secret, handshake_transcript):
+    """Autentica o transcript com HMAC-SHA256; devolve a tag em hexadecimal."""
+    key = secret if isinstance(secret, (bytes, bytearray)) else load_network_key(secret)
+    return hmac.new(bytes(key), handshake_transcript, hashlib.sha256).hexdigest()
 
 
-def load_public_key(role, identity):
-    if identity not in AUTHORIZED_IDENTITIES.get(role, set()):
-        return None
-    provision_demo_identities()
-    return serialization.load_pem_public_key(_paths(role, identity)[1].read_bytes())
-
-
-def generate_untrusted_private_key():
-    """Gera identidade não cadastrada para cenários negativos de teste."""
-    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-
-def sign_transcript(private_key, handshake_transcript):
-    signature = private_key.sign(
-        handshake_transcript,
-        padding.PSS(
-            mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.DIGEST_LENGTH,
-        ),
-        hashes.SHA256(),
-    )
-    return base64.b64encode(signature).decode("ascii")
-
-
-def verify_transcript(role, identity, handshake_transcript, encoded_signature):
-    public_key = load_public_key(role, identity)
-    if public_key is None:
-        return False
+def verify_transcript(secret, handshake_transcript, tag):
+    """Confere a tag HMAC em tempo constante. True se o segredo bate."""
+    expected = sign_transcript(secret, handshake_transcript)
     try:
-        signature = base64.b64decode(encoded_signature, validate=True)
-        public_key.verify(
-            signature,
-            handshake_transcript,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.DIGEST_LENGTH,
-            ),
-            hashes.SHA256(),
-        )
-        return True
-    except (InvalidSignature, TypeError, ValueError):
+        return hmac.compare_digest(expected, str(tag))
+    except (TypeError, ValueError):
         return False
