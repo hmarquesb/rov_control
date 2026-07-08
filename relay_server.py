@@ -253,6 +253,8 @@ class RelayNode:
             self._handle_video(addr, msg)
         elif mtype == "release_control":
             self._handle_release(addr, msg)
+        elif mtype == "disconnect":
+            self._handle_disconnect(addr, msg)
         elif mtype == "heartbeat":
             pass  # já atualizou last_seen acima
         else:
@@ -553,6 +555,15 @@ class RelayNode:
             self._replicate("control", rov=rid, pilot=None)
             self._push_state()
 
+    def _handle_disconnect(self, addr, msg):
+        with self.lock:
+            ident = self.by_addr.get(addr)
+            pilot = self.pilots.get(ident[1]) if ident and ident[0] == "pilot" else None
+            token_ok = bool(pilot and (not pilot.get("token") or secrets.compare_digest(
+                str(pilot.get("token") or ""), str(msg.get("token") or ""))))
+        if not token_ok:
+            return
+        self._drop_pilot(ident[1], reason="desconectou")
     # -- detecção de falhas de clientes ------------------------------------
     def _liveness_monitor(self):
         while self.running:

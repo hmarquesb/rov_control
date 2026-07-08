@@ -89,6 +89,21 @@ class PilotNode:
         if self.endpoint:
             self.endpoint.close()
 
+    def disconnect(self):
+        if self.endpoint:
+            self.endpoint.send_reliable(self.current, {"type": "disconnect",
+                                                       "token": self.token})
+            time.sleep(0.5)
+        self.authed = False
+        self.controlling = None
+        self.token = None
+        self.session_key = None
+        self.auth_transcript = None
+        self.auth_relay_identity = None
+        self.lease_id = None
+        self._connect_started = False
+        self.stop()
+
     def _emit(self, event):
         if self.on_event:
             self.on_event(event)

@@ -14,6 +14,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pilot_client import PilotNode, parse_addr
 
 
+BROWSER_INACTIVE_TIMEOUT = 3.0
+
+
 INDEX_HTML = """<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -199,7 +202,10 @@ INDEX_HTML = """<!doctype html>
     </section>
 
     <section>
-      <button id="connect" class="primary">Conectar ao relay</button>
+      <div class="control-row" style="margin-top: 0;">
+        <button id="connect" class="primary">Conectar ao relay</button>
+        <button id="logout" class="bad">Sair</button>
+      </div>
       <button id="request" style="margin-top: 10px;">Solicitar controle do ROV</button>
       <div id="notice" class="notice">Aguardando conexao.</div>
       <div class="power-line" style="margin-top: 16px;">
@@ -232,6 +238,7 @@ INDEX_HTML = """<!doctype html>
       temperature: document.getElementById("temperature"),
       thruster: document.getElementById("thruster"),
       connect: document.getElementById("connect"),
+      logout: document.getElementById("logout"),
       request: document.getElementById("request"),
       notice: document.getElementById("notice"),
       forward: document.getElementById("forward"),
@@ -276,6 +283,7 @@ INDEX_HTML = """<!doctype html>
       els.temperature.textContent = state.telemetry.temperature == null ? "-" : state.telemetry.temperature + " C";
       els.thruster.textContent = state.telemetry.thruster_power == null ? "-" : state.telemetry.thruster_power;
       els.connect.disabled = state.connecting || state.connected;
+      els.logout.disabled = !(state.connecting || state.connected || state.authed || state.log.length);
       els.request.disabled = !state.authed || Boolean(state.controlling);
       const canCommand = Boolean(state.authed && state.controlling);
       els.forward.disabled = !canCommand;
@@ -320,6 +328,9 @@ INDEX_HTML = """<!doctype html>
       await post("/api/request-control");
       refresh();
     });
+    els.logout.addEventListener("click", async () => {
+      render(await post("/api/logout"));
+    });
     els.forward.addEventListener("click", () => post("/api/command", {
       action: "thruster_frente", value: Number(els.power.value)
     }).then(refresh));
@@ -331,6 +342,17 @@ INDEX_HTML = """<!doctype html>
     }).then(refresh));
     els.release.addEventListener("click", () => post("/api/release").then(refresh));
 
+    function logout() {
+      const payload = new Blob(["{}"], { type: "application/json" });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon("/api/logout", payload);
+      } else {
+        fetch("/api/logout", { method: "POST", body: payload, keepalive: true });
+      }
+    }
+
+    window.addEventListener("pagehide", logout);
+
     refresh();
     setInterval(refresh, 700);
   </script>
@@ -340,15 +362,23 @@ INDEX_HTML = """<!doctype html>
 
 
 class WebPilot:
-    def __init__(self, node):
-        self.node = node
-        self.lock = threading.Lock()
-        self.state = {
+    def __init__(self, node_factory):
+        self.node_factory = node_factory
+        self.lock = threading.RLock()
+        self.node = None
+        self.last_browser_seen = None
+        self.stopped = False
+        self.state = self._fresh_state("")
+        self._start_node()
+        threading.Thread(target=self._browser_watchdog, daemon=True).start()
+
+    def _fresh_state(self, target):
+        return {
             "connected": False,
             "connecting": False,
             "authed": False,
             "relay": "",
-            "target": node.target,
+            "target": target,
             "controlling": "",
             "control_status": "idle",
             "control_reason": "",
@@ -360,8 +390,31 @@ class WebPilot:
             },
             "log": [],
         }
+
+    def _start_node(self):
+        self.node = self.node_factory()
+        self.state = self._fresh_state(self.node.target)
         self.node.on_event = self.on_event
         self.node.start(autoconnect=False)
+
+    def _browser_watchdog(self):
+        while True:
+            time.sleep(0.5)
+            with self.lock:
+                if self.stopped:
+                    return
+                last_seen = self.last_browser_seen
+                has_session = bool(
+                    self.state["connected"] or self.state["connecting"]
+                    or self.state["authed"] or self.state["controlling"]
+                    or self.state["log"]
+                )
+            if last_seen and has_session and time.time() - last_seen > BROWSER_INACTIVE_TIMEOUT:
+                self.reset()
+
+    def mark_browser_seen(self):
+        with self.lock:
+            self.last_browser_seen = time.time()
 
     def on_event(self, event):
         with self.lock:
@@ -408,24 +461,58 @@ class WebPilot:
                         self.state["telemetry"][name] = event[name]
 
     def connect(self):
-        self.node.connect()
+        with self.lock:
+            node = self.node
+        if node:
+            node.connect()
 
     def command(self, action, value):
-        self.node.send_command(action, int(value))
+        with self.lock:
+            node = self.node
+        if node:
+            node.send_command(action, int(value))
 
     def request_control(self):
-        self.node.request_control(self.node.target)
+        with self.lock:
+            node = self.node
+        if node:
+            node.request_control(node.target)
 
     def release(self):
-        self.node.release_control()
+        with self.lock:
+            node = self.node
+        if node:
+            node.release_control()
+
+    def reset(self):
+        with self.lock:
+            old = self.node
+            self.node = None
+            self.last_browser_seen = None
+            if old:
+                old.on_event = None
+        if old:
+            try:
+                old.disconnect()
+            except Exception:
+                old.stop()
+        with self.lock:
+            if not self.stopped:
+                self._start_node()
 
     def snapshot(self):
         with self.lock:
             return json.loads(json.dumps(self.state))
 
     def stop(self):
-        self.node.stop()
-
+        with self.lock:
+            self.stopped = True
+            old = self.node
+            self.node = None
+            if old:
+                old.on_event = None
+        if old:
+            old.stop()
 
 def make_handler(controller):
     class Handler(BaseHTTPRequestHandler):
@@ -452,14 +539,22 @@ def make_handler(controller):
 
         def do_GET(self):
             if self.path == "/" or self.path.startswith("/?"):
+                controller.mark_browser_seen()
                 self._send(200, INDEX_HTML, "text/html; charset=utf-8")
             elif self.path == "/api/status":
+                controller.mark_browser_seen()
                 self._json(200, controller.snapshot())
             else:
                 self._json(404, {"error": "not found"})
 
         def do_POST(self):
             try:
+                if self.path == "/api/logout":
+                    controller.reset()
+                    self._json(200, controller.snapshot())
+                    return
+
+                controller.mark_browser_seen()
                 if self.path == "/api/connect":
                     controller.connect()
                     self._json(200, {"ok": True})
@@ -481,7 +576,6 @@ def make_handler(controller):
                     self._json(404, {"error": "not found"})
             except Exception as exc:
                 self._json(500, {"error": str(exc)})
-
     return Handler
 
 
@@ -497,8 +591,10 @@ def main():
     args = ap.parse_args()
 
     relays = [parse_addr(item) for item in args.relays.split(",") if item.strip()]
-    node = PilotNode(args.id, args.private_key, args.target, relays, loss=args.loss)
-    controller = WebPilot(node)
+    def make_node():
+        return PilotNode(args.id, args.private_key, args.target, relays, loss=args.loss)
+
+    controller = WebPilot(make_node)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(controller))
     print(f"Piloto web em http://{args.host}:{args.port}")
     print("Abra no celular usando o IP deste PC, por exemplo: http://192.168.1.87:8080")
