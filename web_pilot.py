@@ -145,6 +145,20 @@ INDEX_HTML = """<!doctype html>
       font-size: 22px;
       font-weight: 800;
     }
+    .notice {
+      margin-top: 12px;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      color: var(--muted);
+      background: #101720;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .notice.ok { color: var(--accent); }
+    .notice.warn { color: var(--warn); }
+    .notice.bad { color: var(--bad); }
     .log {
       height: 170px;
       overflow: auto;
@@ -186,6 +200,8 @@ INDEX_HTML = """<!doctype html>
 
     <section>
       <button id="connect" class="primary">Conectar ao relay</button>
+      <button id="request" style="margin-top: 10px;">Solicitar controle do ROV</button>
+      <div id="notice" class="notice">Aguardando conexao.</div>
       <div class="power-line" style="margin-top: 16px;">
         <label for="power">Potencia</label>
         <output id="power-value">50%</output>
@@ -216,6 +232,8 @@ INDEX_HTML = """<!doctype html>
       temperature: document.getElementById("temperature"),
       thruster: document.getElementById("thruster"),
       connect: document.getElementById("connect"),
+      request: document.getElementById("request"),
+      notice: document.getElementById("notice"),
       forward: document.getElementById("forward"),
       reverse: document.getElementById("reverse"),
       stop: document.getElementById("stop"),
@@ -258,11 +276,25 @@ INDEX_HTML = """<!doctype html>
       els.temperature.textContent = state.telemetry.temperature == null ? "-" : state.telemetry.temperature + " C";
       els.thruster.textContent = state.telemetry.thruster_power == null ? "-" : state.telemetry.thruster_power;
       els.connect.disabled = state.connecting || state.connected;
+      els.request.disabled = !state.authed || Boolean(state.controlling);
       const canCommand = Boolean(state.authed && state.controlling);
       els.forward.disabled = !canCommand;
       els.reverse.disabled = !canCommand;
       els.stop.disabled = !canCommand;
       els.release.disabled = !canCommand;
+      els.notice.className = "notice";
+      if (state.controlling) {
+        els.notice.textContent = "Controle concedido para " + state.controlling + ".";
+        els.notice.classList.add("ok");
+      } else if (state.authed) {
+        els.notice.textContent = state.control_reason || ("Autenticado, mas sem controle de " + state.target + ".");
+        els.notice.classList.add(state.control_status === "denied" ? "bad" : "warn");
+      } else if (state.connecting) {
+        els.notice.textContent = "Conectando e autenticando no relay.";
+        els.notice.classList.add("warn");
+      } else {
+        els.notice.textContent = "Aguardando conexao.";
+      }
       els.log.textContent = state.log.join("\\n");
       els.log.scrollTop = els.log.scrollHeight;
     }
@@ -282,6 +314,10 @@ INDEX_HTML = """<!doctype html>
     });
     els.connect.addEventListener("click", async () => {
       await post("/api/connect");
+      refresh();
+    });
+    els.request.addEventListener("click", async () => {
+      await post("/api/request-control");
       refresh();
     });
     els.forward.addEventListener("click", () => post("/api/command", {
@@ -314,6 +350,8 @@ class WebPilot:
             "relay": "",
             "target": node.target,
             "controlling": "",
+            "control_status": "idle",
+            "control_reason": "",
             "telemetry": {
                 "battery": None,
                 "depth": None,
@@ -339,14 +377,31 @@ class WebPilot:
                 if status in ("idle", "failover"):
                     self.state["authed"] = False
                     self.state["controlling"] = ""
+                    self.state["control_status"] = "idle"
+                    self.state["control_reason"] = ""
             elif kind == "auth":
                 self.state["authed"] = event.get("state") == "ok"
+                if self.state["authed"] and not self.state["controlling"]:
+                    self.state["control_status"] = "waiting"
+                    self.state["control_reason"] = f"Aguardando controle de {self.state['target']}."
             elif kind == "control":
                 status = event.get("state")
                 if status == "granted":
                     self.state["controlling"] = event.get("rov", "")
+                    self.state["control_status"] = "granted"
+                    self.state["control_reason"] = ""
                 elif status in ("released", "rov_offline"):
                     self.state["controlling"] = ""
+                    self.state["control_status"] = status
+                    self.state["control_reason"] = (
+                        "ROV ficou offline." if status == "rov_offline"
+                        else f"Controle de {self.state['target']} liberado."
+                    )
+                elif status == "denied":
+                    self.state["controlling"] = ""
+                    self.state["control_status"] = "denied"
+                    reason = event.get("reason") or "controle negado"
+                    self.state["control_reason"] = f"Sem controle de {self.state['target']}: {reason}."
             elif kind == "telemetry":
                 for name in ("battery", "depth", "temperature", "thruster_power"):
                     if name in event:
@@ -357,6 +412,9 @@ class WebPilot:
 
     def command(self, action, value):
         self.node.send_command(action, int(value))
+
+    def request_control(self):
+        self.node.request_control(self.node.target)
 
     def release(self):
         self.node.release_control()
@@ -404,6 +462,9 @@ def make_handler(controller):
             try:
                 if self.path == "/api/connect":
                     controller.connect()
+                    self._json(200, {"ok": True})
+                elif self.path == "/api/request-control":
+                    controller.request_control()
                     self._json(200, {"ok": True})
                 elif self.path == "/api/command":
                     body = self._read_json()
