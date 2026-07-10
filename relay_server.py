@@ -21,7 +21,7 @@ CONCEITOS DE SISTEMAS DISTRIBUÍDOS NESTE ARQUIVO:
 
 6) REPLICAÇÃO e TOLERÂNCIA A FALHAS DO PRÓPRIO RELAY (a novidade principal):
    rodamos DOIS relays em esquema PRIMÁRIO-BACKUP.
-     * O primário REPLICA cada mudança de estado para o backup.
+     * O relay ATIVO REPLICA cada mudança de estado para o par em espera.
      * Os dois trocam "relay_ping" para se vigiarem.
      * Se o primário cai, o backup detecta o silêncio e se declara ATIVO; os
        clientes (que monitoram o relay) fazem FAILOVER e se re-registram no
@@ -150,10 +150,16 @@ class RelayNode:
             }
         self._emit(snap)
 
-    # -- replicação primário -> backup -------------------------------------
+    # -- replicação: o líder ATIVO -> o par em espera ----------------------
     def _replicate(self, event, **fields):
-        """O primário envia cada mudança de estado ao backup (canal confiável)."""
-        if self.role == "primary" and self.peer_addr:
+        """Quem está ATIVO envia cada mudança de estado ao par (canal confiável).
+
+        Antes só o primário replicava. Agora quem lidera (primário OU backup que
+        assumiu) replica para o par passivo — assim, se a liderança voltar para o
+        primário, ele tem o estado para RESERVAR a posse ao dono anterior. Um
+        relay passivo não gera eventos (não atende clientes), então não replica.
+        """
+        if self.active and self.peer_addr:
             self.endpoint.send_reliable(self.peer_addr,
                                         {"type": "replicate", "event": event, **fields})
 
@@ -665,8 +671,14 @@ class RelayNode:
                         self.term += 1
                         self.leader_addr = self.bind_addr
                         self.peer_down_logged = False
+                        # Reprotege a posse: reserva cada ROV ao dono anterior (do
+                        # estado replicado) durante a janela de failover, igual ao
+                        # backup ao assumir — evita que um piloto que esperava
+                        # roube o controle na reconexão.
+                        self.reserved = dict(self.mirror_control)
+                        self.reserved_until = time.time() + RESERVE_WINDOW
                     self._log("Sem líder ATIVO no ar — PRIMÁRIO reassumindo a liderança "
-                              f"(termo {self.term}).")
+                              f"(termo {self.term}). Reservando controles: {self.reserved or '—'}.")
                     self._push_state()
                 elif self.role == "primary" and silent > PRIMARY_TIMEOUT and not self.peer_down_logged:
                     self.peer_down_logged = True
