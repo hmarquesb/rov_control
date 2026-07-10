@@ -86,6 +86,7 @@ class RelayNode:
         self.leader_addr = self.bind_addr if self.active else self.peer_addr
         self.last_peer_relay = time.time()  # última vez que ouvimos o outro relay
         self.peer_down_logged = False
+        self.peer_active_last = False  # o par se declarou ATIVO no último ping?
 
         # Reserva de controle no failover: ao assumir, o backup usa o estado
         # replicado para RESERVAR cada ROV ao seu dono anterior por uma janela
@@ -173,6 +174,7 @@ class RelayNode:
             peer_active = bool(msg.get("active"))
             changed = False
             with self.lock:
+                self.peer_active_last = peer_active
                 if peer_term > self.term:
                     self.term = peer_term
                     if peer_active:
@@ -649,6 +651,22 @@ class RelayNode:
                     self._log("PRIMÁRIO sem resposta — BACKUP assumindo como ATIVO. "
                               f"Reservando controles (replicados): {self.reserved or '—'}. "
                               "Aguardando clientes fazerem failover…")
+                    self._push_state()
+                elif self.role == "primary" and not self.active \
+                        and not (silent < PRIMARY_TIMEOUT and self.peer_active_last):
+                    # O primário está PASSIVO e não há backup ATIVO no ar — ou o
+                    # par caiu (silêncio), ou os dois ficaram passivos após
+                    # reinícios (o "impasse dos dois seguidores"). O primário
+                    # reassume para o sistema não ficar sem líder. Não preempta um
+                    # backup que esteja de fato ATIVO: enquanto o par estiver vivo
+                    # e se declarando ativo, esta condição é falsa.
+                    with self.lock:
+                        self.active = True
+                        self.term += 1
+                        self.leader_addr = self.bind_addr
+                        self.peer_down_logged = False
+                    self._log("Sem líder ATIVO no ar — PRIMÁRIO reassumindo a liderança "
+                              f"(termo {self.term}).")
                     self._push_state()
                 elif self.role == "primary" and silent > PRIMARY_TIMEOUT and not self.peer_down_logged:
                     self.peer_down_logged = True
