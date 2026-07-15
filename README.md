@@ -71,7 +71,7 @@ reais voando entre os nós (azul = comando confiável, cinza = telemetria, verde
 ACK, ✕ vermelho = perdido), e à direita a **cena submarina 2D** do ROV, que
 desce/sobe, solta bolhas e apaga a luz conforme o piloto age e a bateria cai.
 
-Botões ao vivo: **Conectar Piloto A**, **Frente/Ré/Parar**, **＋ Piloto B**
+Botões ao vivo: **Conectar Piloto A**, **Descer/Subir/Parar**, **＋ Piloto B**
 (concorrência), **☠ Derrubar primário** (veja a topologia se curar no failover)
 e um slider de **perda de pacotes** (veja a retransmissão acontecer). Tudo roda
 em um processo só, mas os nós conversam por **UDP real** no loopback.
@@ -189,7 +189,7 @@ python web_pilot.py --id pilotoCel --secret NOSSA_SENHA \
    pacotes azuis (registro → DH efêmero → prova HMAC do segredo) voando até o RELAY P, o nó
    do piloto virar "autenticado" e depois "controla ✓". O log embaixo mostra o
    processo; explique que **o segredo e a chave de sessão nunca trafegam**.
-3. **Controle + telemetria:** use **Frente/Ré/Parar** com o slider de potência.
+3. **Controle + telemetria:** use **Descer/Subir/Parar** com o slider de potência.
    O ROV **desce/sobe** na água, solta bolhas e a bateria cai — e os pacotes de
    comando (azul) e telemetria (cinza) aparecem na topologia.
 4. **Protocolo (QUIC-lite):** arraste o slider **"Perda de pacotes"** para ~25%.
@@ -211,7 +211,7 @@ python web_pilot.py --id pilotoCel --secret NOSSA_SENHA \
 1. Relays e ROV sobem conectados; os pilotos começam desconectados.
 2. Clique **"Conectar ao relay"** na janela do `pilotoA` e acompanhe o handshake
    de autenticação no log dele e no do relay.
-3. Use **Frente/Ré/Parar** e veja a telemetria mudar na janela do ROV e do piloto.
+3. Use **Descer/Subir/Parar** e veja a telemetria mudar na janela do ROV e do piloto.
 4. A janela do `pilotoB` mostra **"controle negado"** (exclusão mútua).
 5. Rode com `--loss 0.2` para ver comandos retransmitindo e telemetria piscando.
 6. **Feche a janela do RELAY primário**: em poucos segundos o backup vira ATIVO e

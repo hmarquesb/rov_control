@@ -214,8 +214,8 @@ INDEX_HTML = """<!doctype html>
       </div>
       <input id="power" type="range" min="0" max="100" value="50">
       <div class="control-row">
-        <button id="forward" class="primary">Frente</button>
-        <button id="reverse" class="warn">Re</button>
+        <button id="descer" class="primary">Descer</button>
+        <button id="subir" class="warn">Subir</button>
       </div>
       <div class="control-row">
         <button id="stop" class="bad">Parar</button>
@@ -241,8 +241,8 @@ INDEX_HTML = """<!doctype html>
       logout: document.getElementById("logout"),
       request: document.getElementById("request"),
       notice: document.getElementById("notice"),
-      forward: document.getElementById("forward"),
-      reverse: document.getElementById("reverse"),
+      descer: document.getElementById("descer"),
+      subir: document.getElementById("subir"),
       stop: document.getElementById("stop"),
       release: document.getElementById("release"),
       power: document.getElementById("power"),
@@ -286,8 +286,8 @@ INDEX_HTML = """<!doctype html>
       els.logout.disabled = !(state.connecting || state.connected || state.authed || state.log.length);
       els.request.disabled = !state.authed || Boolean(state.controlling);
       const canCommand = Boolean(state.authed && state.controlling);
-      els.forward.disabled = !canCommand;
-      els.reverse.disabled = !canCommand;
+      els.descer.disabled = !canCommand;
+      els.subir.disabled = !canCommand;
       els.stop.disabled = !canCommand;
       els.release.disabled = !canCommand;
       els.notice.className = "notice";
@@ -331,11 +331,11 @@ INDEX_HTML = """<!doctype html>
     els.logout.addEventListener("click", async () => {
       render(await post("/api/logout"));
     });
-    els.forward.addEventListener("click", () => post("/api/command", {
-      action: "thruster_frente", value: Number(els.power.value)
+    els.descer.addEventListener("click", () => post("/api/command", {
+      action: "descer", value: Number(els.power.value)
     }).then(refresh));
-    els.reverse.addEventListener("click", () => post("/api/command", {
-      action: "thruster_re", value: Number(els.power.value)
+    els.subir.addEventListener("click", () => post("/api/command", {
+      action: "subir", value: Number(els.power.value)
     }).then(refresh));
     els.stop.addEventListener("click", () => post("/api/command", {
       action: "parar", value: 0
@@ -564,7 +564,7 @@ def make_handler(controller):
                 elif self.path == "/api/command":
                     body = self._read_json()
                     action = body.get("action")
-                    if action not in ("thruster_frente", "thruster_re", "parar"):
+                    if action not in ("descer", "subir", "parar"):
                         self._json(400, {"error": "invalid action"})
                         return
                     controller.command(action, body.get("value", 0))

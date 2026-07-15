@@ -85,12 +85,12 @@ def main():
 
         depth = rov1.state.snapshot()["depth"]
         pilot_a.endpoint.send_reliable(
-            PRIMARY, {"type": "command", "action": "thruster_frente",
+            PRIMARY, {"type": "command", "action": "descer",
                       "value": 100, "command_seq": 999})
         time.sleep(0.8)
         check("comando sem token é rejeitado",
               rov1.state.snapshot()["depth"] == depth)
-        pilot_a.send_command("thruster_frente", 60)
+        pilot_a.send_command("descer", 60)
         check("comando autenticado funciona", wait_until(
             lambda: rov1.state.snapshot()["depth"] > depth, timeout=2))
 
@@ -103,17 +103,24 @@ def main():
         primary.stop()
         check("backup assume em termo superior", wait_until(
             lambda: backup.active and backup.term >= 2, timeout=5))
-        # Espera o ROV concluir o re-registro no backup E adotar o novo termo:
-        # só então faz sentido testar a rejeição de um comando de termo OBSOLETO
-        # (antes disso o ROV ainda nem sabe qual é o termo atual).
+        # Espera o ROV concluir o re-registro no backup E adotar o novo termo,
+        # E o piloto reconquistar o controle (reserva via replicação) — só
+        # então um comando seu ("parar", abaixo) tem como ser aceito.
         check("clientes migram ao novo líder", wait_until(
             lambda: pilot_a.current == BACKUP and rov1.current == BACKUP
-                    and rov1.registered and rov1.highest_term >= backup.term, timeout=9))
+                    and rov1.registered and rov1.highest_term >= backup.term
+                    and pilot_a.controlling == "rov1", timeout=9))
 
+        # O comando "descer" de antes deixou o thruster ligado (agora o
+        # movimento é contínuo até um "parar"). Paramos primeiro para que a
+        # profundidade só mude se o comando OBSOLETO abaixo for indevidamente
+        # aplicado — não por causa de um thrust anterior ainda ativo.
+        pilot_a.send_command("parar", 0)
+        wait_until(lambda: rov1.state.snapshot()["thruster_power"] == 0, timeout=3)
         depth = rov1.state.snapshot()["depth"]
         target = backup.rovs["rov1"]["addr"]
         backup.endpoint.send_reliable(
-            target, {"type": "command", "from": "stale", "action": "thruster_frente",
+            target, {"type": "command", "from": "stale", "action": "descer",
                      "value": 100, "term": backup.term - 1,
                      "lease_id": "stale", "command_seq": 500})
         time.sleep(0.8)

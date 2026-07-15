@@ -347,11 +347,11 @@ def run_gui(node, corner):
     btns = tk.Frame(root, bg=g.BG)
     btns.pack(fill="x", padx=10)
 
-    def cmd_frente():
-        node.send_command("thruster_frente", int(power.get()))
+    def cmd_descer():
+        node.send_command("descer", int(power.get()))
 
-    def cmd_re():
-        node.send_command("thruster_re", int(power.get()))
+    def cmd_subir():
+        node.send_command("subir", int(power.get()))
 
     def cmd_parar():
         node.send_command("parar", 0)
@@ -362,8 +362,8 @@ def run_gui(node, corner):
                       width=8, pady=6)
         return b
 
-    mkbtn(btns, "▲ Frente", g.OKC, cmd_frente).pack(side="left", expand=True, fill="x", padx=2)
-    mkbtn(btns, "▼ Ré", g.ACCENT, cmd_re).pack(side="left", expand=True, fill="x", padx=2)
+    mkbtn(btns, "▼ Descer", g.OKC, cmd_descer).pack(side="left", expand=True, fill="x", padx=2)
+    mkbtn(btns, "▲ Subir", g.ACCENT, cmd_subir).pack(side="left", expand=True, fill="x", padx=2)
     mkbtn(btns, "■ Parar", g.WARN, cmd_parar).pack(side="left", expand=True, fill="x", padx=2)
     tk.Button(root, text="Soltar controle", command=node.release_control, bg="#37474f",
               fg=g.FG, relief="flat", font=("Segoe UI", 9)).pack(fill="x", padx=10, pady=(6, 0))

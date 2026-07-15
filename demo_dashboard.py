@@ -122,8 +122,8 @@ class Dashboard:
         self.power = tk.Scale(actions, from_=0, to=100, orient="horizontal", length=120,
                               bg=g.BG, fg=g.FG, troughcolor="#11151c", highlightthickness=0)
         self.power.set(60); self.power.pack(side="left", padx=4)
-        self._button(actions, "Frente", g.OKC, lambda: self.command("thruster_frente")).pack(side="left", padx=2)
-        self._button(actions, "Ré", g.ACCENT, lambda: self.command("thruster_re")).pack(side="left", padx=2)
+        self._button(actions, "Descer", g.OKC, lambda: self.command("descer")).pack(side="left", padx=2)
+        self._button(actions, "Subir", g.ACCENT, lambda: self.command("subir")).pack(side="left", padx=2)
         self._button(actions, "Parar", g.WARN, lambda: self.command("parar")).pack(side="left", padx=2)
         self.kill_btn = self._button(actions, "Derrubar primário", g.BAD, self.toggle_primary)
         self.kill_btn.pack(side="left", padx=10)

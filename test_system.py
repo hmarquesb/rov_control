@@ -59,7 +59,7 @@ def main():
 
     print("\n-- 2) Comando confiável chega ao ROV --")
     depth_before = rov.state.snapshot()["depth"]
-    pilotA.send_command("thruster_frente", 80)
+    pilotA.send_command("descer", 80)
     time.sleep(1.5)
     depth_after = rov.state.snapshot()["depth"]
     check(f"profundidade aumentou após comando ({depth_before} -> {depth_after})",
@@ -100,7 +100,7 @@ def main():
 
     print("\n-- 7) Comando ainda funciona após o failover --")
     depth_before = rov.state.snapshot()["depth"]
-    pilotA.send_command("thruster_frente", 90)
+    pilotA.send_command("descer", 90)
     time.sleep(1.5)
     depth_after = rov.state.snapshot()["depth"]
     check(f"profundidade aumentou no backup ({depth_before} -> {depth_after})",
